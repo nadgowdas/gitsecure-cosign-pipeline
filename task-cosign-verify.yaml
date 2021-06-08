@@ -1,0 +1,141 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: cosign-verify
+spec:
+  params:
+    - name: repository
+      description: the git repo url
+    - name: revision
+      description: the revision
+      default: master
+    - name: commit-id
+      description: git commit id
+    - name: pr-url
+      description: pull request html url
+      default: ""
+    - name: git-access-token
+      description: |
+        (optional) token to access the git repository. If this token is provided, there will not be an attempt
+        to use the git token obtained from the authorization flow when adding the git integration in the toolchain
+      default: ""
+    - name: github-token-secret-name
+      description: |
+        The name of the kubernetes secret that contains the GitHub token
+    - name: github-token-secret-key
+      description: |
+        The key within the kubernetes secret that contains the GitHub token, default: password
+      default: password  
+    - name: scm-type
+      description: source code type used (github, github-ent, gitlab)
+      default: "github-ent"
+    - name: pipeline-debug
+      description: toggles debug mode for the pipeline
+      default: "0"
+    - name: sbom-filepath
+      description: sbom filepath
+    - name: pubkey-filepath
+      description: cosign public key  
+    - name: directory-name
+      description: directory name where the repository is cloned
+
+  results:
+    - name: status
+      description: status of bom task, possible value are-success|failure
+    - name: evidence-store
+      description: filepath to store bom task evidence
+
+  stepTemplate:
+    env:
+      - name: PIPELINE_DEBUG
+        value: $(params.pipeline-debug)
+
+  steps:
+    - name: verify
+      image: icr.io/gitsecure/cosign-verifier:0.0.1
+      imagePullPolicy: Always
+      env:
+        - name: REPOSITORY
+          value: $(params.repository)
+        # The location of the client configuration files.
+        - name: DOCKER_CONFIG
+          value: /tekton/home/.docker
+        - name: BASE_IMG_REGCRED
+          valueFrom:
+            secretKeyRef:
+              name: "registry-access-secret"
+              key: ".dockerconfigjson"
+      workingDir: "/artifacts"
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          #!/bin/sh
+
+          if [ "$PIPELINE_DEBUG" == "1" ]; then
+            pwd
+            env
+            trap env EXIT
+            set -x +e
+          fi
+          echo $BASE_IMG_REGCRED > ~/.docker/config.json
+          
+          
+          /gitsecure/cosign-verify \
+            -sbomfp "$(params.sbom-filepath)"  \
+            -pubkeyfp /etc/cosign/cosign.pub \
+            -status "$(results.status.path)" \
+            -evidencefp "./gitsecure-verification.json" \
+            -markdownfp "./gitsecure-verify-comment.md"
+
+          echo -n "gitsecure-verification.json" > $(results.evidence-store.path)
+          echo "COMMENT_FP=./gitsecure-verify-comment.md" >> /steps/next-step-env.properties
+
+      volumeMounts:
+        - mountPath: /steps
+          name: steps-volume
+        - mountPath: /etc/cosign
+          name: cosign-pub-key 
+        # - mountPath: ~/.docker/config.json
+        #   name: base-img-regcred
+
+    - name: comment-editor
+      image: icr.io/gitsecure/comm-editor:1.0.0
+      imagePullPolicy: Always
+      workingDir: "/artifacts"
+      env:
+      - name: GITHUB_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: $(params.github-token-secret-name)
+            key: $(params.github-token-secret-key)
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          #!/bin/sh
+          source /steps/next-step-env.properties
+        
+          /usr/local/bin/comm-editor \
+            -repo-url "$(params.repository)" \
+            -pr-url "$(params.pr-url)" \
+            -token "$GITHUB_TOKEN" \
+            -comment-fp "$COMMENT_FP" \
+            -scm-type "$(params.scm-type)"
+
+      volumeMounts:
+        - mountPath: /steps
+          name: steps-volume
+
+  workspaces:
+    - name: artifacts
+      mountPath: /artifacts
+
+  volumes:
+    - name: steps-volume
+      emptyDir: {}
+    - name: cosign-pub-key
+      secret:
+        secretName: cosign-pub-key
+    # - name: base-img-regcred
+    #   secret:
+    #     secretName: registry-access-secret

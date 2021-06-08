@@ -1,0 +1,80 @@
+---
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: TriggerTemplate
+metadata:
+  name: pr-template
+spec:
+  params:
+  - name: repo-url
+    description: The git repo
+  - name: repo-full-name
+    description: |
+      The GitHub repository full name, e.g.: tektoncd/catalog
+  - name: branch-name
+    description: branch
+  - name: commit-id
+    description: commit id
+  - name: commit-timestamp
+    description: commit timestamp
+  - name: scm-type
+    description: scm type 
+  - name: pr-url
+    description: pull request url
+  - name: github-token-secret-name
+    description: |
+      The name of the kubernetes secret that contains the GitHub token
+  - name: github-token-secret-key
+    description: |
+      The key within the kubernetes secret that contains the GitHub token, default: password
+    default: password  
+  - name: github-host-url
+    description: |
+      The GitHub host, adjust this if you run a GitHub enteprise.
+    default: "api.github.com"  
+  - name: api-path-prefix
+    description: |
+      The API path prefix, GitHub Enterprise has a prefix e.g. /api/v3
+    default: ""  
+
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        name: pipelinerun-$(uid)
+      spec:
+        serviceAccountName: gs-access-svcaccount
+        pipelineRef:
+          name: gitsecure-pipeline
+        workspaces:
+          - name: shared-data
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 1Gi
+        params:
+        - name: repo-url
+          value: $(tt.params.repo-url)
+        - name:  repo-full-name
+          value: $(tt.params.repo-full-name)  
+        - name:  branch-name
+          value: $(tt.params.branch-name)
+        - name:  commit-id
+          value: $(tt.params.commit-id)
+        - name:  commit-timestamp
+          value: $(tt.params.commit-timestamp)
+        - name:  pr-url
+          value: $(tt.params.pr-url)
+        - name:  scm-type
+          value: $(tt.params.scm-type)
+        - name:  github-token-secret-name
+          value: $(tt.params.github-token-secret-name)
+        - name:  github-token-secret-key
+          value: $(tt.params.github-token-secret-key)
+        - name:  github-host-url
+          value: $(tt.params.github-host-url)
+        - name:  api-path-prefix
+          value: $(tt.params.api-path-prefix)      
+

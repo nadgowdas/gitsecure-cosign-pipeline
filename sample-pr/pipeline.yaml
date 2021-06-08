@@ -1,0 +1,195 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: gitsecure-pipeline
+spec:
+  description: |
+    cat-branch-readme takes a git repository and a branch name and
+    prints the README.md file from that branch. This is an example
+    Pipeline demonstrating the following:
+      - Using the git-clone catalog Task to clone a branch
+      - Passing a cloned repo to subsequent Tasks using a Workspace.
+      - Ordering Tasks in a Pipeline using "runAfter" so that
+        git-clone completes before we try to read from the Workspace.
+      - Using a volumeClaimTemplate Volume as a Workspace.
+      - Avoiding hard-coded paths by using a Workspace's path
+        variable instead.
+  params:
+  - name: repo-url
+    type: string
+    description: The git repository URL to clone from.
+  - name: repo-full-name
+    description: |
+      The GitHub repository full name, e.g.: tektoncd/catalog
+  - name: branch-name
+    type: string
+    description: The git branch to clone.
+  - name: commit-id
+    description: commit id
+  - name: commit-timestamp
+    description: commit timestamp
+  - name: scm-type
+    description: scm type 
+  - name: pr-url
+    description: pull request url
+  - name: github-token-secret-name
+    description: |
+      The name of the kubernetes secret that contains the GitHub token
+  - name: github-token-secret-key
+    description: |
+      The key within the kubernetes secret that contains the GitHub token, default: password
+  - name: github-host-url
+    description: |
+      The GitHub host, adjust this if you run a GitHub enteprise.
+    default: "api.github.com"  
+  - name: api-path-prefix
+    description: |
+      The API path prefix, GitHub Enterprise has a prefix e.g. /api/v3
+    default: ""
+
+  workspaces:
+  - name: shared-data
+    description: |
+      This workspace will receive the cloned git repo and be passed
+      to the next Task for the repo's README.md file to be read.
+  tasks:
+  - name: fetch-repo
+    taskRef:
+      name: git-clone
+    workspaces:
+    - name: output
+      workspace: shared-data
+    params:
+    - name: url
+      value: $(params.repo-url)
+    - name: revision
+      value: $(params.commit-id)
+
+  - name: microscope-scan
+    runAfter:
+      - fetch-repo
+    taskRef:
+      name: microscope-scan
+    workspaces:
+      - name: artifacts
+        workspace: shared-data
+    params:
+      - name: repository
+        value: $(params.repo-url)
+      - name: revision
+        value: $(params.branch-name)
+      - name: commit-id
+        value: $(params.commit-id)
+      - name: directory-name
+        value: ""
+      - name: commit-timestamp
+        value: $(params.commit-timestamp)
+
+  - name: fetch-bom
+    runAfter:
+      - microscope-scan
+    taskRef:
+      name: fetch-bom
+    workspaces:
+      - name: artifacts
+        workspace: shared-data
+    params:
+      - name: repository
+        value: $(params.repo-url)
+      - name: revision
+        value: $(params.branch-name)
+      - name: pr-url
+        value: $(params.pr-url)
+      - name: commit-id
+        value: $(params.commit-id)
+      - name: scm-type
+        value: $(params.scm-type)
+      - name: github-token-secret-name
+        value: $(params.github-token-secret-name)
+      - name: github-token-secret-key
+        value: $(params.github-token-secret-key)
+
+  - name: cosign-verify-status-pending
+    runAfter:
+      - fetch-repo
+    taskRef:
+      name: github-set-status
+    params:
+      - name: GITHUB_HOST_URL
+        value: $(params.github-host-url)
+      - name: API_PATH_PREFIX
+        value: $(params.api-path-prefix)
+      - name: STATE
+        value: pending
+      - name: CONTEXT
+        value: cosign-verify
+      - name: DESCRIPTION
+        value: "Tekton PR Pipeline Status"
+      - name: REPO_FULL_NAME
+        value: $(params.repo-full-name)
+      - name: GITHUB_TOKEN_SECRET_NAME
+        value: $(params.github-token-secret-name)
+      - name: GITHUB_TOKEN_SECRET_KEY
+        value: $(params.github-token-secret-key)
+      - name: SHA 
+        value: $(params.commit-id)
+      - name: TARGET_URL
+        value: "https://cloud.ibm.com"
+
+  - name: cosign-verify
+    runAfter:
+      - fetch-bom
+    taskRef:
+      name: cosign-verify
+    workspaces:
+      - name: artifacts
+        workspace: shared-data
+    params:
+      - name: repository
+        value: $(params.repo-url)
+      - name: revision
+        value: $(params.branch-name)
+      - name: pr-url
+        value: $(params.pr-url)
+      - name: commit-id
+        value: $(params.commit-id)
+      - name: scm-type
+        value: $(params.scm-type)
+      - name: github-token-secret-name
+        value: $(params.github-token-secret-name)
+      - name: github-token-secret-key
+        value: $(params.github-token-secret-key)
+      - name: sbom-filepath
+        value: $(tasks.fetch-bom.results.evidence-store)   
+      - name: pubkey-filepath
+        value: ""
+      - name: directory-name
+        value: ""
+
+  - name: cosign-verify-status-finished
+    runAfter:
+      - cosign-verify
+    taskRef:
+      name: github-set-status
+    params:
+      - name: GITHUB_HOST_URL
+        value: $(params.github-host-url)
+      - name: API_PATH_PREFIX
+        value: $(params.api-path-prefix)
+      - name: STATE
+        value: "$(tasks.cosign-verify.results.status)"
+      - name: CONTEXT
+        value: cosign-verify
+      - name: DESCRIPTION
+        value: "Tekton PR Pipeline Status"
+      - name: REPO_FULL_NAME
+        value: $(params.repo-full-name)
+      - name: GITHUB_TOKEN_SECRET_NAME
+        value: $(params.github-token-secret-name)
+      - name: GITHUB_TOKEN_SECRET_KEY
+        value: $(params.github-token-secret-key)
+      - name: SHA 
+        value: $(params.commit-id)
+      - name: TARGET_URL
+        value: "https://cloud.ibm.com"

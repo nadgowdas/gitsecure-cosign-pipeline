@@ -1,0 +1,13 @@
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: EventListener
+metadata:
+ name: github-pr-listener
+spec:
+ serviceAccountName: pipeline
+ triggers:
+   - name: github-pr-listener
+     bindings:
+       - ref: github-pr-binding
+     template:
+       name: pr-template
+---

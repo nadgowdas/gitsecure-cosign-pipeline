@@ -1,0 +1,28 @@
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: TriggerBinding
+metadata:
+  name: github-pr-binding
+spec:
+  params:
+    - name: repo-url
+      value: $(body.repository.html_url)
+    - name: repo-full-name
+      value: $(body.repository.full_name)
+    - name: branch-name
+      value: $(body.pull_request.head.ref)
+    - name: commit-id
+      value: $(body.pull_request.head.sha)
+    - name: pr-url
+      value: $(body.pull_request.url)
+    - name: scm-type
+      value: "github"
+    - name: commit-timestamp
+      value: $(body.pull_request.head.repo.pushed_at)
+    - name: github-token-secret-name
+      value: "git-ent-secret"
+    - name:  github-token-secret-key
+      value: "password"
+    - name: github-host-url
+      value: "api.github.com"
+    - name: api-path-prefix
+      value: ""

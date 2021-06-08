@@ -1,0 +1,146 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: microscope-scan
+  labels:
+    app.kubernetes.io/version: "0.2"
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.12.1"
+    tekton.dev/tags: git
+    tekton.dev/displayName: "cra discovery"
+spec:
+  params:
+    - name: repository
+      description: the git repo
+    - name: revision
+      description: the revision
+      default: master
+    - name: commit-id
+      description: git commit id
+    - name: commit-timestamp
+      description: git commit timestamp
+    - name: directory-name
+      description: directory name where the repository is cloned
+    - name: pipeline-debug
+      description: toggles debug mode for the pipeline
+      default: "0"
+
+  results:
+    - name: status
+      description: status of discovery task, possible value are-success|failure
+
+  stepTemplate:
+    env:
+      - name: PIPELINE_DEBUG
+        value: $(params.pipeline-debug)
+
+  steps:
+    - name: discovery
+      image: icr.io/gitsecure/microscope-scanner:1.0.0
+      imagePullPolicy: Always
+      workingDir: "/artifacts"
+      command: ["/bin/sh", "-c"]
+      env:
+        # The location of the client configuration files.
+        - name: DOCKER_CONFIG
+          value: /artifacts
+      args:
+        - |
+          #!/bin/sh
+          if [ "$PIPELINE_DEBUG" = "1" ]; then
+            pwd
+            env
+            trap env EXIT
+            set -x +e
+          fi
+
+          REPO_DIR_PATH="/artifacts/$(params.directory-name)"
+
+          gitsecureUrl="https://apiservice-ykt.gitsecure-api.com"
+
+          if [ -z "$gitsecureUrl" -o "$gitsecureUrl" = "null" ]; then
+            echo ""
+            echo "Error IBM Code Risk Analyzer is not supported in ${REGION_ID}"
+            exit 1
+          fi
+
+          # create a dry-run k8s secret of type docker-registry to obtain 
+          # the pull secrets for the base image used in the dockerfile
+          # this is optional, but sometimes useful, for example when using
+          # UBI images from RedHat
+           
+          # if [ -f "/properties/build-baseimage-auth-user" ] \
+          #   && [ -f "/secrets/build-baseimage-auth-password" ] \
+          #   && [ -f "/properties/build-baseimage-auth-host" ]; then
+
+          #   echo "Adding pull secrets to access base image registry $(cat /properties/build-baseimage-auth-host)"
+
+          #   kubectl create secret --dry-run=client --output=json \
+          #     docker-registry registry-dockerconfig-secret \
+          #     --docker-username="$(cat /properties/build-baseimage-auth-user)" \
+          #     --docker-password="$(cat /secrets/build-baseimage-auth-password)" \
+          #     --docker-server="$(cat /properties/build-baseimage-auth-host)" \
+          #     --docker-email="$(cat /properties/build-baseimage-auth-email)" | \
+          #     jq -r '.data[".dockerconfigjson"]' | base64 -d > config.json
+
+            # build_baseimage_auth="$(jq -r -c \
+            #   --arg host "$(cat /properties/build-baseimage-auth-host)" \
+            #   '.auths[$host]' \
+            #   build-baseimage-auth.json)"
+            # echo "$(jq -r -c \
+            #   --arg host "$(cat /properties/build-baseimage-auth-host)" \
+            #   --argjson data "${build_baseimage_auth}" \
+            #   '.auths[$host] = $data' \
+            #   config.json)" > config.json
+          # fi
+          echo "eyJhdXRocyI6eyJ1cy5pY3IuaW8iOnsidXNlcm5hbWUiOiJpYW1hcGlrZXkiLCJwYXNzd29yZCI6Im84Vkt5ajJBbkZQQXBtdUtIb29fcm51VHJkWFVBQVVKdElvYTRKaVMyanBNIiwiZW1haWwiOiJuYWRnb3dkYUB1cy5pYm0uY29tIiwiYXV0aCI6ImFXRnRZWEJwYTJWNU9tODRWa3Q1YWpKQmJrWlFRWEJ0ZFV0SWIyOWZjbTUxVkhKa1dGVkJRVlZLZEVsdllUUkthVk15YW5CTiJ9fX0=" | base64 -d > config.json
+          cat config.json
+
+          /usr/local/bin/discovery \
+            -giturl "$(params.repository)" \
+            -gitbranch "$(params.revision)" \
+            -repodir $REPO_DIR_PATH  \
+            -rigapi "${gitsecureUrl}" \
+            -commitid "$(params.commit-id)" \
+            -commitTimestamp "$(params.commit-timestamp)" 
+
+      volumeMounts:
+        - mountPath: /var/run/
+          name: docker-socket
+        # - mountPath: /artifacts/config.json
+        #   name: base-img-regcred 
+
+  sidecars:
+    - image: docker:19.03-dind
+      name: server
+      securityContext:
+        privileged: true
+      env:
+        # enable BUILDKIT Option
+        - name: DOCKER_BUILDKIT
+          value: "1"
+        # Write generated certs to the path shared with the client.
+        - name: DOCKER_TLS_CERTDIR
+          value: /certs
+      volumeMounts:
+        - mountPath: /var/run/
+          name: docker-socket
+      # Wait for the dind daemon to generate the certs it will share with the client.
+      readinessProbe:
+        periodSeconds: 1
+        exec:
+          command: ["ls", "/certs/client/ca.pem"]
+
+  workspaces:
+    - name: artifacts
+      mountPath: /artifacts
+
+  volumes:
+    - name: docker-socket
+      emptyDir: {}
+    - name: base-img-regcred
+      secret:
+        secretName: registry-access-secret
+        
+
