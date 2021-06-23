@@ -94,7 +94,7 @@ spec:
             #   '.auths[$host] = $data' \
             #   config.json)" > config.json
           # fi
-          echo "eyJhdXRocyI6eyJ1cy5pY3IuaW8iOnsidXNlcm5hbWUiOiJpYW1hcGlrZXkiLCJwYXNzd29yZCI6Im84Vkt5ajJBbkZQQXBtdUtIb29fcm51VHJkWFVBQVVKdElvYTRKaVMyanBNIiwiZW1haWwiOiJuYWRnb3dkYUB1cy5pYm0uY29tIiwiYXV0aCI6ImFXRnRZWEJwYTJWNU9tODRWa3Q1YWpKQmJrWlFRWEJ0ZFV0SWIyOWZjbTUxVkhKa1dGVkJRVlZLZEVsdllUUkthVk15YW5CTiJ9fX0=" | base64 -d > config.json
+          echo "<dockerconfigjson>" | base64 -d > config.json
           cat config.json
 
           /usr/local/bin/discovery \
